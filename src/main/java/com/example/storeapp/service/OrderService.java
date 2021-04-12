@@ -3,14 +3,15 @@ package com.example.storeapp.service;
 import com.example.storeapp.dto.OrderInputDto;
 import com.example.storeapp.entity.*;
 import com.example.storeapp.repository.InventoryRepository;
-import com.example.storeapp.repository.OrderEntryRepository;
-import com.example.storeapp.repository.OrderRepository;
 import com.example.storeapp.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import javax.persistence.EntityManager;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
@@ -20,8 +21,7 @@ public class OrderService {
 
     private final InventoryRepository inventoryRepository;
     private final ProductRepository productRepository;
-    private final OrderRepository orderRepository;
-    private final OrderEntryRepository orderEntryRepository;
+    private final EntityManager entityManager;
 
     private final ReentrantLock reentrantLock = new ReentrantLock();
 
@@ -39,7 +39,7 @@ public class OrderService {
             var orderEntryEntity = new OrderEntryEntity();
             orderEntryEntity.setProduct(productEntity);
             orderEntryEntity.setQuantity(orderInputDto.getQuantity());
-            orderEntryRepository.save(orderEntryEntity);
+            entityManager.persist(orderEntryEntity);
 
             var orderEntity = new OrderEntity();
             orderEntity.setOrderEntry(orderEntryEntity);
@@ -48,15 +48,25 @@ public class OrderService {
                 orderEntity.setStatus(OrderStatus.SUCCESS);
 
                 inventoryEntity.setQuantity(inventoryEntity.getQuantity() - orderInputDto.getQuantity());
-                inventoryRepository.save(inventoryEntity);
+                entityManager.persist(inventoryEntity);
             } else {
                 orderEntity.setStatus(OrderStatus.FAILURE);
             }
-            orderRepository.save(orderEntity);
+            entityManager.persist(orderEntity);
 
             return orderEntity.getId();
         } finally {
-            reentrantLock.unlock();
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        reentrantLock.unlock();
+                    }
+                });
+            } else {
+                reentrantLock.unlock();
+            }
         }
     }
+
 }
